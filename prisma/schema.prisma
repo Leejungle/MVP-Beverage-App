@@ -1,0 +1,116 @@
+// Beverage Shop Management — Prisma Schema
+// Stack: Prisma 7 + SQLite
+// 4 models: Ingredient, Product, ProductRecipeItem, Order, OrderItem
+// Legacy models (DailySale) and legacy fields (outputMl, purchaseWeightKg,
+// coffeeMlPerCup, ingredientId) removed in S10.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// ------------------------------------------------------------------
+// Ingredient
+// A raw material used in beverage recipes.
+// Can represent any ingredient: coffee, tea, milk, sugar, cups, straws,
+// toppings, syrups, etc. The owner creates ingredients freely from the UI.
+//
+// costPerBaseUnit = purchasePrice / purchaseQuantity  (computed, not stored)
+// ------------------------------------------------------------------
+model Ingredient {
+  id                Int       @id @default(autoincrement())
+  name              String
+  purchasePrice     Float     // VND paid for this bulk purchase
+  unit              String    @default("ml") // base unit: ml | g | piece | shot | portion
+  purchaseQuantity  Float     // total quantity purchased in base unit (required)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  recipeItems       ProductRecipeItem[]
+}
+
+// ------------------------------------------------------------------
+// Product
+// A single menu item (e.g. "Cà Phê Đen", "Trà Sữa Trân Châu").
+//
+// Cost is fully defined by the product's recipe items (ProductRecipeItem).
+// recipeCost = Σ (recipeItem.quantityUsed × ingredient.costPerBaseUnit) — computed.
+// ------------------------------------------------------------------
+model Product {
+  id              Int       @id @default(autoincrement())
+  name            String
+  salePrice       Float     // VND per serving
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  orderItems      OrderItem[]
+  recipeItems     ProductRecipeItem[]
+}
+
+// ------------------------------------------------------------------
+// ProductRecipeItem
+// Junction table that links a Product to one Ingredient with a specific
+// quantityUsed per serving (measured in the Ingredient's base unit).
+//
+// A product's recipe = all its ProductRecipeItems.
+// recipeCost = Σ (quantityUsed × ingredient.costPerBaseUnit) — computed.
+//
+// @@unique([productId, ingredientId]) ensures each ingredient appears at most
+// once per recipe. To change the quantity, update the existing row.
+// ------------------------------------------------------------------
+model ProductRecipeItem {
+  id            Int      @id @default(autoincrement())
+  productId     Int
+  ingredientId  Int
+  quantityUsed  Float    // amount of ingredient used per one serving, in ingredient's base unit
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  product    Product    @relation(fields: [productId], references: [id])
+  ingredient Ingredient @relation(fields: [ingredientId], references: [id])
+
+  @@unique([productId, ingredientId])
+}
+
+// ------------------------------------------------------------------
+// Order
+// Represents one customer transaction (a single visit / cashier entry).
+// Each order holds one or more OrderItems.
+// orderDate stored as YYYY-MM-DD string.
+// All financial totals are derived at read time, not stored.
+// ------------------------------------------------------------------
+model Order {
+  id          Int         @id @default(autoincrement())
+  orderDate   String      // YYYY-MM-DD
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  items       OrderItem[]
+}
+
+// ------------------------------------------------------------------
+// OrderItem
+// One line in an Order — one product at a given quantity.
+// unitPrice snapshots product.salePrice at the moment the order is placed.
+// unitCost  snapshots the recipe-based cost at the moment the order is placed.
+// Both snapshots ensure historical profit accuracy even if prices or recipe
+// costs change after the order is completed.
+// unitCost is nullable for backward compatibility with pre-S0 orders.
+// ------------------------------------------------------------------
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  productId   Int
+  quantity    Int      // items ordered (>= 1)
+  unitPrice   Float    // snapshot of product.salePrice at order time (VND)
+  unitCost    Float?   // snapshot of recipe cost at order time (VND) — nullable for pre-S0 compat
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  order       Order    @relation(fields: [orderId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+}
